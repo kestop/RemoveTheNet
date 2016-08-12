@@ -15,25 +15,28 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="..\..\..\car1.png">
-      <Filter>Resource Files</Filter>
-    </Image>
-    <Image Include="..\..\..\car2.png">
-      <Filter>Resource Files</Filter>
-    </Image>
-    <Image Include="..\..\..\car3.png">
-      <Filter>Resource Files</Filter>
-    </Image>
-    <Image Include="blur.jpg">
+    <Image Include="pics\AISCAM2.png">
       <Filter>Resource Files</Filter>
     </Image>
     <Image Include="pics\IndoorSoccer.jpg">
       <Filter>Resource Files</Filter>
     </Image>
+    <Image Include="pics\WPCCAM7.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="pics\WSCCAM2.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="pics\WSCCAM8.png">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="prototype.cpp">
+    <ClCompile Include="findNet1.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ClassDiagram.cd" />
   </ItemGroup>
 </Project>

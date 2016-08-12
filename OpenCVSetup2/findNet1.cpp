@@ -16,11 +16,10 @@ using namespace std;
 
 Mat image0, image, mask;
 Mat gray, edges, pyr;
-//const string imgName("./pics/AISCAM2.png");// has to be / not \ 
 const string videoName("./videos/WillowsSportsCentreCam8.mp4");
 const string outputName("./output/sample3.avi");
-const string wndName2("Mask");
 const string wndName("Image");
+const string wndName2("Mask");
 
 
 static void onMouse(int event, int x, int y, int, void*);
@@ -32,20 +31,18 @@ bool ifAtCenter(Point p1, Point p2, const Mat & image);
 void findNet(const Mat& image, vector<double> angles, double lineLength);
 void makeMask(const vector<Vec4i> lines,
     const vector<double> angles, const double lineLength);
-void manualCompensation(Mat& mask);
 void drawSquare(Mat& src, Mat& dst);
 void help();
 void eventLoop();
 void inpaintWithMask();
-void processVideo();
+void processVideo(const int startFrameIndex);
 void Erosion(Mat& src, Mat& erosion_dst);
 void Dilation(Mat& src, Mat& dilation_dst);
-void capAFrameFromVideo(int frameIndex);
+void capAFrameFromVideo(const int frameIndex);
 void maskDisplay();
 void findLines(int, void*);
 
 vector<Point> points;
-vector<Point> cmpstPoints;
 int flag = 'n';
 int min_threshold = 50;
 int max_trackbar = 150;
@@ -76,7 +73,7 @@ int main(int argc, char* argv[])
     return 0;
 }
 //Get a frame from the video to create mask from 
-void capAFrameFromVideo(int frameIndex)
+void capAFrameFromVideo(const int frameIndex)
 {
     VideoCapture cap(videoName);
     if (!cap.isOpened())
@@ -84,7 +81,7 @@ void capAFrameFromVideo(int frameIndex)
         cerr << "Video cannot be opened" << endl;
         exit(EXIT_FAILURE);
     }
-    cout << "Total frame is " << cap.get(CV_CAP_PROP_FRAME_COUNT) << "\n"
+    cout << "Total frame number is " << cap.get(CV_CAP_PROP_FRAME_COUNT) << "\n"
         << "Current frame is " << cap.get(CAP_PROP_POS_FRAMES) << "\n"
         << "FPS is " << cap.get(CAP_PROP_FPS)
         << endl;
@@ -95,7 +92,7 @@ void capAFrameFromVideo(int frameIndex)
         << endl;
 
 }
-void processVideo()
+void processVideo(const int startFrameIndex)
 {
     VideoCapture cap(videoName);
     if (!cap.isOpened())
@@ -110,11 +107,9 @@ void processVideo()
         cerr << "Videowrite failed to open" << endl; return;
     }
 
-
     Mat frame;
     namedWindow("video", WINDOW_AUTOSIZE);
-    const int startFrame = 50;
-    cap.set(CAP_PROP_POS_FRAMES, startFrame);
+    cap.set(CAP_PROP_POS_FRAMES, startFrameIndex);
     int totalFrames = cap.get(CV_CAP_PROP_FRAME_COUNT);
     clock_t start = clock();
 
@@ -123,21 +118,21 @@ void processVideo()
         cap >> frame; // get a new frame from cap
         if (frame.empty())
             break;
-
         int nextFrame = cap.get(CV_CAP_PROP_POS_FRAMES);
-        
         clock_t duration = clock() - start;
-
-        cout << "next frame: " << nextFrame
-            << "\nprocessed frames : " << nextFrame - startFrame
-            << "\nremaining frame: " << totalFrames - nextFrame
-            << "\nTotal Duration :" << duration / CLOCKS_PER_SEC
-            << "\nProcessing time per frame" << duration / CLOCKS_PER_SEC/ (nextFrame - startFrame)
-            << endl;
+        //Inpaint with the mask 
         inpaint(frame, mask, frame, 3, INPAINT_TELEA);
         putText(frame, to_string(nextFrame), Point(128, 70),
             FONT_HERSHEY_SCRIPT_SIMPLEX, 2, Scalar::all(255), 2, 8);
         wrt << frame;
+
+        cout << "next frame: " << nextFrame
+            << "\nprocessed frames : " << nextFrame - startFrameIndex
+            << "\nremaining frame: " << totalFrames - nextFrame
+            << "\nTotal Duration :" << duration / CLOCKS_PER_SEC << "s" 
+            << "\nProcessing time per frame" 
+            << duration / CLOCKS_PER_SEC/ (nextFrame - startFrameIndex) << "s"
+            << endl;
         imshow("video", frame);
 
         char key = (char)waitKey(30);
@@ -218,7 +213,7 @@ void eventLoop()
         case 'v':
             flag = 'v'; cout << char(flag) << endl;
             cout << "video Mode" << endl;
-            processVideo();
+            processVideo(0);
             break;
         case 'd':
             pressDraw = pressDraw ? false : true;
@@ -228,6 +223,7 @@ void eventLoop()
         }
     }
 }
+
 //To define the angle filter by pointing 4 lines. First, "\". 
 //Second, "/". Third, "-" but rotating upwards. Finally, "-" downwards
 //And make the half length of the longest line as the lineLength filter
@@ -247,6 +243,7 @@ void defineFourEdges(vector<double> angles, double lineLength)
 
 }
 
+//Dilate if the net is too thick, and erode if the net is too thin. 
 void findNet(const Mat& image, vector<double> angles, double lineLength)
 {
     // down-scale and upscale the image to filter out the noise
@@ -265,14 +262,6 @@ void findNet(const Mat& image, vector<double> angles, double lineLength)
     createTrackbar(thresh_label,wndName, &trackbar, max_trackbar, findLines);
     findLines(0, 0);
     
-    //vector<Vec4i> lines;
-    //const int  HLPThresh = 30, minLineLength = 30, maxLineGap = 10;// user change on the interface 
-    //HoughLinesP(edges, lines, 1, CV_PI / 180, HLPThresh, minLineLength, maxLineGap);//THE min and max can be defined by the user 
-
-    //makeMask(lines, angles, lineLength);
-
-    //image0.copyTo(image);//restore before inpainting 
-    //inpaint(image, mask, image, 3, INPAINT_TELEA);
 }
 
 void findLines(int, void*)
@@ -286,7 +275,6 @@ void findLines(int, void*)
     image0.copyTo(image);
     inpaint(image, mask, image, 3, INPAINT_TELEA);
 }
-
 
 //Erode the image
 void Erosion(Mat& src, Mat& erosion_dst)
@@ -328,19 +316,21 @@ void Dilation(Mat& src, Mat& dilation_dst)
     dilate(src, dilation_dst, element);
     imshow("Dilation Demo", dilation_dst);
 }
+
 //Inpaint with Mask
 void inpaintWithMask()
 {
     image0.copyTo(image);//restore before inpainting 
     inpaint(image, mask, image, 3, INPAINT_TELEA);
-
 }
+
 //Display the mask to the image window
 void maskDisplay()
 {
     Mat blank(image.size(), image.type(), Scalar::all(255));
     add(image, blank, image, mask, -1);
 }
+
 //Generate the mask frome the results of Lines obtained
 void makeMask(const vector<Vec4i> lines,
     const vector<double> angles, const double lineLength)
@@ -368,12 +358,6 @@ void makeMask(const vector<Vec4i> lines,
         << "\nActually painted lines after angle and length filter = " << count << endl;
 }
 
-//Manually draw or erase the mask
-void manualCompensation(Mat& mask)
-{
-    flag = '0';
-}
-
 //the angle between p2->p1 with the horizontal direction
 static double angle(Point p1, Point p2)
 {
@@ -388,7 +372,8 @@ static double length(Point p1, Point p2)
     double dx = p2.x - p1.x;
     return sqrt(dx*dx + dy*dy);
 }
-//Assistive function
+
+//Assistive function for specific situation
 bool ifAtCenter(Point p1, Point p2, const Mat & image)
 {
     Rect centerRect = Rect(175, 113,
@@ -469,6 +454,7 @@ static void onMouseForMaskWnd(int event, int x, int y, int, void*)
         }
     }
 }
+
 //HELP info
 void help()
 {

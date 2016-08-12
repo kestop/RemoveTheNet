@@ -150,14 +150,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <Image Include="..\..\..\car1.png" />
-    <Image Include="..\..\..\car2.png" />
-    <Image Include="..\..\..\car3.png" />
-    <Image Include="blur.jpg" />
+    <Image Include="pics\AISCAM2.png" />
     <Image Include="pics\IndoorSoccer.jpg" />
+    <Image Include="pics\WPCCAM7.png" />
+    <Image Include="pics\WSCCAM2.png" />
+    <Image Include="pics\WSCCAM8.png" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="prototype.cpp" />
+    <ClCompile Include="findNet1.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="ClassDiagram.cd" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
