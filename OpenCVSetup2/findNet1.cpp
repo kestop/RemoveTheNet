@@ -16,8 +16,8 @@ using namespace std;
 
 Mat image0, image, mask;
 Mat gray, edges, pyr;
-const string videoName("./videos/WillowsSportsCentreCam8.mp4");
-const string outputName("./output/sample3.avi");
+const string videoName("./videos/ActionIndoorSportsBristolCam2.mp4");
+const string outputName("./output/sample4.avi");
 const string wndName("Image");
 const string wndName2("Mask");
 
@@ -41,12 +41,15 @@ void Dilation(Mat& src, Mat& dilation_dst);
 void capAFrameFromVideo(const int frameIndex);
 void maskDisplay();
 void findLines(int, void*);
+void countTheDistance();
+int getGridPointsNumber(double l1, double l2, double ld);
 
 vector<Point> points;
+vector<Point> priorPoints;
 int flag = 'n';
 int min_threshold = 50;
 int max_trackbar = 150;
-int trackbar = max_trackbar/2;
+int trackbar = max_trackbar / 2;
 int circleRadius = 2;
 bool eraseMode = false;
 bool mouseDown = false;
@@ -58,7 +61,7 @@ double lineLength = 100;
 int main(int argc, char* argv[])
 {
     help();
-    capAFrameFromVideo(0);
+    capAFrameFromVideo(51);
 
     image0.copyTo(image);//Initialize image and mask
     mask = Mat::zeros(image0.size(), CV_8U);
@@ -72,7 +75,8 @@ int main(int argc, char* argv[])
 
     return 0;
 }
-//Get a frame from the video to create mask from 
+//Get a frame from the video to create mask from
+//@ frameIndex The location of the frame
 void capAFrameFromVideo(const int frameIndex)
 {
     VideoCapture cap(videoName);
@@ -81,12 +85,12 @@ void capAFrameFromVideo(const int frameIndex)
         cerr << "Video cannot be opened" << endl;
         exit(EXIT_FAILURE);
     }
-    cout << "Total frame number is " << cap.get(CV_CAP_PROP_FRAME_COUNT) << "\n"
-        << "Current frame is " << cap.get(CAP_PROP_POS_FRAMES) << "\n"
-        << "FPS is " << cap.get(CAP_PROP_FPS)
-        << endl;
     cap.set(CAP_PROP_POS_FRAMES, frameIndex);
     cap >> image0;
+    cout << "Total frame number is " << cap.get(CV_CAP_PROP_FRAME_COUNT) << "\n"
+        << "Start frame index is " << cap.get(CAP_PROP_POS_FRAMES) << "\n"
+        << "FPS is " << cap.get(CAP_PROP_FPS)
+        << endl;
     cout << "Image cols(width) = " << image0.cols << "\n"
         << "Image rows(height) = " << image0.rows
         << endl;
@@ -129,9 +133,9 @@ void processVideo(const int startFrameIndex)
         cout << "next frame: " << nextFrame
             << "\nprocessed frames : " << nextFrame - startFrameIndex
             << "\nremaining frame: " << totalFrames - nextFrame
-            << "\nTotal Duration :" << duration / CLOCKS_PER_SEC << "s" 
-            << "\nProcessing time per frame" 
-            << duration / CLOCKS_PER_SEC/ (nextFrame - startFrameIndex) << "s"
+            << "\nTotal Duration :" << duration / CLOCKS_PER_SEC << "s"
+            << "\nProcessing time per frame"
+            << duration / CLOCKS_PER_SEC / (nextFrame - startFrameIndex) << "s"
             << endl;
         imshow("video", frame);
 
@@ -218,11 +222,75 @@ void eventLoop()
         case 'd':
             pressDraw = pressDraw ? false : true;
             break;
+            //for new features
+        case 'l':
+            flag = 'l'; cout << char(flag) << endl;
+            cout << "Prior Points selection" << endl;
+            break;
+        case 'a':
+            flag = 'a'; cout << char(flag) << endl;
+            cout << "Predict points and draw them" << endl;
+            countTheDistance();
+            break;
         default:
             break;
         }
     }
 }
+//Count the distance using the edges and the prior points
+void countTheDistance()
+{
+    for each (Point var in priorPoints)
+    {
+        cout << "x : " << var.x << "y " << var.y << endl;
+    }
+    double d1 = length(priorPoints.at(0), priorPoints.at(1));
+    double d2 = length(priorPoints.at(2), priorPoints.at(3));
+    double d12 = length(priorPoints.at(1), priorPoints.at(2));
+    cout << "d1: " << d1 << " d2:" << d2 << "d12: " << d12 << endl;
+
+    int n = getGridPointsNumber(d1, d2, d12);
+
+    cout << "draw" << endl;
+    double dX = (std::abs(priorPoints.at(0).x - priorPoints.at(2).x) +
+        std::abs(priorPoints.at(1).x - priorPoints.at(3).x)) / (2 * (n+1));
+    double dY = (std::abs(priorPoints.at(0).y - priorPoints.at(2).y) +
+        std::abs(priorPoints.at(1).y - priorPoints.at(3).y)) / (2 * (n+1));
+    if (n > 1)
+    {
+        for (size_t i = 1; i < n; i++)
+        {
+            Point tmp = Point(priorPoints[1].x + i*dX, priorPoints.at(1).y + i*dY);
+            cout << tmp << endl;
+            priorPoints.push_back(tmp);
+            circle(image, tmp, 2, Scalar::all(255), FILLED);
+            circle(mask, tmp, 2, Scalar::all(255), FILLED);
+        }
+    }
+    else
+    {
+        cout << "Wrong: n <= 1" << endl;
+    }
+    imshow(wndName, image);
+    imshow(wndName2, mask);
+
+}
+/** @breif To get the number of the line segements, when l1 > l2, we have :
+ds = (l1-l2)/(n+1);
+(l2 + ds)+(l2 + 2*ds)+....+(l2+n*ds) = ld => n*l2 + (n(n+1)/2)*ds = ld => n = 2c/(a+b)
+@param l1 line segement 1
+@param l2 line segement 2
+@param ld distance between 2 line segements
+*/
+int getGridPointsNumber(double l1, double l2, double ld)
+{
+    double n = (2 * ld) / (l1 + l2);
+    cout << "n: " << n << endl;
+    return int(round(n));
+}
+
+
+
 
 //To define the angle filter by pointing 4 lines. First, "\". 
 //Second, "/". Third, "-" but rotating upwards. Finally, "-" downwards
@@ -259,9 +327,9 @@ void findNet(const Mat& image, vector<double> angles, double lineLength)
     /// Create Trackbars for Thresholds
     char thresh_label[50];
     sprintf(thresh_label, "Thres: %d + input", min_threshold);
-    createTrackbar(thresh_label,wndName, &trackbar, max_trackbar, findLines);
+    createTrackbar(thresh_label, wndName, &trackbar, max_trackbar, findLines);
     findLines(0, 0);
-    
+
 }
 
 void findLines(int, void*)
@@ -416,8 +484,8 @@ static void onMouse(int event, int x, int y, int, void*)
             cout << "**************************" << endl;
             imshow(wndName, image);
             imshow(wndName2, mask);
-            break;
         }
+        break;
 
     case '0':
         if (mouseDown)
@@ -431,6 +499,18 @@ static void onMouse(int event, int x, int y, int, void*)
         }
         imshow(wndName, image);
         imshow(wndName2, mask);
+        break;
+    case 'l':
+        if (event == EVENT_LBUTTONDOWN)
+        {
+            priorPoints.push_back(seed);
+            circle(image, seed, 2, Scalar::all(255), CV_FILLED, 8, 0);
+            circle(mask, seed, 2, Scalar::all(255), CV_FILLED, 8, 0);
+            cout << seed << endl;
+            cout << "**************************" << endl;
+            imshow(wndName, image);
+            imshow(wndName2, mask);
+        }
         break;
     default:
         break;
