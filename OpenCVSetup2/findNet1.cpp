@@ -43,9 +43,19 @@ void maskDisplay();
 void findLines(int, void*);
 void countTheDistance();
 int getGridPointsNumber(double l1, double l2, double ld);
+void predictJoints(vector<vector<Point>> pp);
+void predictPoints(const vector<cv::Point> pts, vector<double>& gapJts);
+void avgGapJoints(const vector<vector<double>> gJ, double fGJ[]);
+void generateJoints(double fGJ[], vector<Point> pts);
+bool nextLine(Point seed);
+
+
+
 
 vector<Point> points;
-vector<Point> priorPoints;
+vector<vector<Point>> priorPoints;
+vector<Point> priorRow;
+size_t rowNo = 0;
 int flag = 'n';
 int min_threshold = 50;
 int max_trackbar = 150;
@@ -237,44 +247,129 @@ void eventLoop()
         }
     }
 }
-//Count the distance using the edges and the prior points
+//@brief Count the distance using the edges and the prior points
+//invoking predictPoints()
 void countTheDistance()
 {
-    for each (Point var in priorPoints)
-    {
-        cout << "x : " << var.x << "y " << var.y << endl;
-    }
-    double d1 = length(priorPoints.at(0), priorPoints.at(1));
-    double d2 = length(priorPoints.at(2), priorPoints.at(3));
-    double d12 = length(priorPoints.at(1), priorPoints.at(2));
-    cout << "d1: " << d1 << " d2:" << d2 << "d12: " << d12 << endl;
+    priorPoints.push_back(priorRow);
 
-    int n = getGridPointsNumber(d1, d2, d12);
+    vector<vector<Point>> verticalPtss;
 
-    cout << "draw" << endl;
-    double dX = (std::abs(priorPoints.at(0).x - priorPoints.at(2).x) +
-        std::abs(priorPoints.at(1).x - priorPoints.at(3).x)) / (2 * (n+1));
-    double dY = (std::abs(priorPoints.at(0).y - priorPoints.at(2).y) +
-        std::abs(priorPoints.at(1).y - priorPoints.at(3).y)) / (2 * (n+1));
-    if (n > 1)
+    for (size_t i = 0; i < priorPoints[0].size(); i++)
     {
-        for (size_t i = 1; i < n; i++)
+        vector<Point> verticalPts;
+        for (size_t j = 0; j < priorPoints.size(); j++)
         {
-            Point tmp = Point(priorPoints[1].x + i*dX, priorPoints.at(1).y + i*dY);
-            cout << tmp << endl;
-            priorPoints.push_back(tmp);
-            circle(image, tmp, 2, Scalar::all(255), FILLED);
-            circle(mask, tmp, 2, Scalar::all(255), FILLED);
+            verticalPts.push_back(priorPoints[j][i]);
         }
+        verticalPtss.push_back(verticalPts);
+        
     }
-    else
-    {
-        cout << "Wrong: n <= 1" << endl;
-    }
+    cout << verticalPtss.size() << endl;
+    predictJoints(verticalPtss);
+
+    predictJoints(priorPoints);
+
     imshow(wndName, image);
     imshow(wndName2, mask);
-
 }
+
+void predictJoints(vector<vector<Point>> pp)
+{
+    int n = 0;
+    const size_t sz = pp.size();
+    vector<vector<double>> gapJointsNum;
+    for (size_t i = 0; i < sz; i++)
+    {
+        gapJointsNum.push_back(vector<double>());
+    }
+
+    double finalGapJointsNum[10] = { 0 };
+
+    cout << "GapJoints size : " << gapJointsNum.size() << endl;
+    for (size_t i = 0; i < sz; i++)
+    {
+        predictPoints(pp[i], gapJointsNum[i]);
+    }
+    avgGapJoints(gapJointsNum, finalGapJointsNum);
+    for (size_t i = 0; i < sz; i++)
+    {
+        generateJoints(finalGapJointsNum, pp[i]);
+
+    }
+}
+
+/** @brief To Predict Points on a prior knowledge of user defined points
+The points has to be started with one grid segement, not two or more.
+Work on both vertical and horizontal situations.
+@param pts A vector of cv::Point to detemine a line. Number of points needs to be even.
+*/
+void predictPoints(const vector<cv::Point> pts, vector<double> &gapJtsNum)
+{
+    
+    const size_t sz = pts.size();
+    for (size_t i = 0; i < sz - 3; i++)
+    {
+        double l1 = length(pts[i], pts[i + 1]);
+        double l2 = length(pts[i + 1], pts[i + 2]);
+        //To generate or not
+        if (l2 > 2 * l1)
+        {
+            double ld = l2;
+            l2 = length(pts[i + 2], pts[i + 3]);
+            int n = getGridPointsNumber(l1, l2, ld);
+            gapJtsNum.push_back(n);
+        }
+    }
+}
+
+//???
+void avgGapJoints(const vector<vector<double>> gJ, double fGJ[])
+{
+    for (size_t col = 0; col < gJ.front().size(); col++)
+    {
+        for (size_t row = 0; row < gJ.size(); row++)
+        {
+            fGJ[col] += gJ[row][col];
+        }
+        fGJ[col] /= (int)gJ.size();
+    cout << "/nfGJ[" <<col  << "]"<< fGJ[col]<< endl;
+    }
+}
+
+void generateJoints(double fGJ[], vector<Point> pts)
+{
+    const size_t sz = pts.size();
+    int k = 0;
+    for (size_t i = 0; i < sz - 3; i++)
+    {
+        int n = int(round(fGJ[k]));
+        double l1 = length(pts[i], pts[i + 1]);
+        double l2 = length(pts[i + 1], pts[i + 2]);
+        if (l2 > 2 * l1)
+        {
+            l2 = length(pts[i + 2], pts[i + 3]);
+            double dX = ((pts[i].x - pts[i + 2].x) +
+                (pts[i + 1].x - pts[i + 3].x)) / (2.0 * (n + 1));
+            double dY = ((pts[i].y - pts[i + 2].y) +
+                (pts[i + 1].y - pts[i + 3].y)) / (2.0 * (n + 1));
+            cout << "DX : " << dX << endl;
+            cout << "DY : " << dY << endl;
+
+            for (size_t j = 1; j < n; j++)
+            {
+                Point tmp = Point(round(pts[i + 1].x - j*dX), round(pts[i + 1].y - j*dY));
+                cout << tmp << endl;
+                pts.push_back(tmp);
+                circle(image, tmp, 2, Scalar(0, 0, 255), FILLED);
+                circle(mask, tmp, 2, Scalar::all(255), FILLED);
+            }
+            k++;
+        }
+    }
+}
+
+
 /** @breif To get the number of the line segements, when l1 > l2, we have :
 ds = (l1-l2)/(n+1);
 (l2 + ds)+(l2 + 2*ds)+....+(l2+n*ds) = ld => n*l2 + (n(n+1)/2)*ds = ld => n = 2c/(a+b)
@@ -503,7 +598,12 @@ static void onMouse(int event, int x, int y, int, void*)
     case 'l':
         if (event == EVENT_LBUTTONDOWN)
         {
-            priorPoints.push_back(seed);
+            if (priorRow.size() > 1 && nextLine(seed))
+            {
+                priorPoints.push_back(priorRow);
+                priorRow.clear();
+            }
+            priorRow.push_back(seed);
             circle(image, seed, 2, Scalar::all(255), CV_FILLED, 8, 0);
             circle(mask, seed, 2, Scalar::all(255), CV_FILLED, 8, 0);
             cout << seed << endl;
@@ -517,6 +617,11 @@ static void onMouse(int event, int x, int y, int, void*)
     }
 
 
+}
+
+bool nextLine(Point seed)
+{
+    return seed.x < priorRow[1].x ? true : false;
 }
 static void onMouseForMaskWnd(int event, int x, int y, int, void*)
 {
