@@ -41,12 +41,15 @@ void Dilation(Mat& src, Mat& dilation_dst);
 void capAFrameFromVideo(const int frameIndex);
 void maskDisplay();
 void findLines(int, void*);
-void countTheDistance();
+void generateTheNet();
 int getGridPointsNumber(double l1, double l2, double ld);
-void predictJoints(vector<vector<Point>> pp);
+void predictJoints(vector<vector<Point>> &pp);
+void expandJointsToWholeNet(vector<vector<Point>> &pp);
+bool outOfImage(Point p);
+double getTheD(vector<Point> p, int xORy);
 void predictPoints(const vector<cv::Point> pts, vector<double>& gapJts);
 void avgGapJoints(const vector<vector<double>> gJ, double fGJ[]);
-void generateJoints(double fGJ[], vector<Point> pts);
+void generateJoints(double fGJ[], vector<Point> &pts);
 bool nextLine(Point seed);
 
 
@@ -240,7 +243,7 @@ void eventLoop()
         case 'a':
             flag = 'a'; cout << char(flag) << endl;
             cout << "Predict points and draw them" << endl;
-            countTheDistance();
+            generateTheNet();
             break;
         default:
             break;
@@ -249,12 +252,11 @@ void eventLoop()
 }
 //@brief Count the distance using the edges and the prior points
 //invoking predictPoints()
-void countTheDistance()
+void generateTheNet()
 {
     priorPoints.push_back(priorRow);
-
+    //vertical 
     vector<vector<Point>> verticalPtss;
-
     for (size_t i = 0; i < priorPoints[0].size(); i++)
     {
         vector<Point> verticalPts;
@@ -263,30 +265,57 @@ void countTheDistance()
             verticalPts.push_back(priorPoints[j][i]);
         }
         verticalPtss.push_back(verticalPts);
-        
     }
-    cout << verticalPtss.size() << endl;
-    predictJoints(verticalPtss);
 
-    predictJoints(priorPoints);
+    predictJoints(verticalPtss);
+    expandJointsToWholeNet(verticalPtss);
+
+    //horizontal
+    vector < vector<Point> > horizontalPtss;
+    for (size_t i = 0; i < verticalPtss[0].size(); i++)
+    {
+        vector<Point> horizontalPts;
+        for (size_t j = 0; j < verticalPtss.size(); j++)
+        {
+            horizontalPts.push_back(verticalPtss[j][i]);
+        }
+        horizontalPtss.push_back(horizontalPts);
+    }
+
+    predictJoints(horizontalPtss);
+    expandJointsToWholeNet(horizontalPtss);
+
+    vector<vector<Point>> verticalPtss2;
+    for (size_t i = 0; i < horizontalPtss[0].size(); i++)
+    {
+        vector<Point> verticalPts2;
+        for (size_t j = 0; j < horizontalPtss.size(); j++)
+        {
+            verticalPts2.push_back(horizontalPtss[j][i]);
+        }
+        verticalPtss2.push_back(verticalPts2);
+    }   
+
+    polylines(image, verticalPtss2, false, Scalar::all(255), 2);
+    polylines(image, horizontalPtss, false, Scalar::all(255),2);
+    polylines(mask, verticalPtss2, false, Scalar::all(255), 2);
+    polylines(mask, horizontalPtss, false, Scalar::all(255),2);
+
+
 
     imshow(wndName, image);
     imshow(wndName2, mask);
 }
 
-void predictJoints(vector<vector<Point>> pp)
+void predictJoints(vector<vector<Point>> &pp)
 {
     int n = 0;
     const size_t sz = pp.size();
-    vector<vector<double>> gapJointsNum;
-    for (size_t i = 0; i < sz; i++)
-    {
-        gapJointsNum.push_back(vector<double>());
-    }
+    vector<vector<double>> gapJointsNum(sz);
 
     double finalGapJointsNum[10] = { 0 };
 
-    cout << "GapJoints size : " << gapJointsNum.size() << endl;
+    cout << "Gap Size : " << gapJointsNum.size() << endl;
     for (size_t i = 0; i < sz; i++)
     {
         predictPoints(pp[i], gapJointsNum[i]);
@@ -295,9 +324,90 @@ void predictJoints(vector<vector<Point>> pp)
     for (size_t i = 0; i < sz; i++)
     {
         generateJoints(finalGapJointsNum, pp[i]);
-
     }
 }
+
+void expandJointsToWholeNet(vector<vector<Point>> &pp)
+{
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+        double dX = getTheD(pp[i], 1);
+        double dY = getTheD(pp[i], 0);
+        vector<Point> vecTmp;
+        for (size_t j = 1; ; j++)
+        {
+            double pX = pp[i].front().x + dX*j;
+            double pY = pp[i].front().y + dY*j;
+            Point tmp = Point(pX, pY);
+            if (!outOfImage(tmp))
+                break;
+            vecTmp.push_back(tmp);
+            circle(image, tmp, 3, Scalar(0, 0, 255), -1);
+            circle(mask, tmp, 3, Scalar(255), -1);
+        }
+        pp[i].insert(pp[i].begin(), vecTmp.rbegin(), vecTmp.rend());
+        cout << "********* in expand. chosen vertical col" << endl;
+        for each (auto var in pp[i])
+        {
+            cout << var << endl;
+        }
+        vecTmp.clear();
+        
+        for (size_t k = 1;; k++)
+        {
+            cout << "/n *pp[i].end() : " << (*(&(pp[i].back())-k+1)).y << endl;
+            double pX = (*(&(pp[i].back()) - k + 1)).x - dX*k;
+            double pY = (*(&(pp[i].back()) - k + 1)).y - dY*k;
+            cout << "\npX " << pX << endl;
+            cout << "\npY " << pY << endl;
+            Point tmp = Point(int(round(pX)), int(round(pY)));
+            cout << "\ntmp in bottom gene : " << tmp << endl;
+            if (!outOfImage(tmp))
+                break;
+            pp[i].push_back(tmp);
+            circle(image, tmp, 3, Scalar(0, 0, 255), -1);
+            circle(mask, tmp, 3, Scalar(255), -1);
+        }
+    }
+}
+
+bool outOfImage(Point p)
+{
+    if (p.inside(Rect(0, 0, image.cols, image.rows)))
+    {
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+/*@brief To get the incremental distance in x or y direction
+@param p
+@param xORy >0 in x, else y
+*/
+double getTheD(vector<Point> p, int xORy)
+{
+    double sum = 0;
+    const size_t sz = p.size();
+    if (xORy > 0)
+    {
+        for (size_t i = 0; i < sz - 1; i++)
+        {
+            sum += (p[i].x - p[i + 1].x);
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < sz - 1; i++)
+        {
+            sum += (p[i].y - p[i + 1].y);
+        }
+    }
+    return (sum /= sz);
+}
+
 
 /** @brief To Predict Points on a prior knowledge of user defined points
 The points has to be started with one grid segement, not two or more.
@@ -306,7 +416,6 @@ Work on both vertical and horizontal situations.
 */
 void predictPoints(const vector<cv::Point> pts, vector<double> &gapJtsNum)
 {
-    
     const size_t sz = pts.size();
     for (size_t i = 0; i < sz - 3; i++)
     {
@@ -333,21 +442,22 @@ void avgGapJoints(const vector<vector<double>> gJ, double fGJ[])
             fGJ[col] += gJ[row][col];
         }
         fGJ[col] /= (int)gJ.size();
-    cout << "/nfGJ[" <<col  << "]"<< fGJ[col]<< endl;
+        cout << "/nfGJ[" << col << "]" << fGJ[col] << endl;
     }
 }
 
-void generateJoints(double fGJ[], vector<Point> pts)
+void generateJoints(double fGJ[], vector<Point> &pts)
 {
     const size_t sz = pts.size();
     int k = 0;
-    for (size_t i = 0; i < sz - 3; i++)
+    for (size_t i = 0; i < pts.size()-3; i++)
     {
         int n = int(round(fGJ[k]));
         double l1 = length(pts[i], pts[i + 1]);
         double l2 = length(pts[i + 1], pts[i + 2]);
         if (l2 > 2 * l1)
         {
+
             l2 = length(pts[i + 2], pts[i + 3]);
             double dX = ((pts[i].x - pts[i + 2].x) +
                 (pts[i + 1].x - pts[i + 3].x)) / (2.0 * (n + 1));
@@ -356,17 +466,31 @@ void generateJoints(double fGJ[], vector<Point> pts)
             cout << "DX : " << dX << endl;
             cout << "DY : " << dY << endl;
 
+            vector<Point> vecTmp;
             for (size_t j = 1; j < n; j++)
             {
                 Point tmp = Point(round(pts[i + 1].x - j*dX), round(pts[i + 1].y - j*dY));
                 cout << tmp << endl;
-                pts.push_back(tmp);
+                //pts.insert(pts.begin()+i+1,tmp);
+                //pts.push_back(tmp);
+                vecTmp.push_back(tmp);
                 circle(image, tmp, 2, Scalar(0, 0, 255), FILLED);
                 circle(mask, tmp, 2, Scalar::all(255), FILLED);
             }
+            //Insert to keep ordered
+            pts.insert(pts.begin() + i + 2, vecTmp.begin(), vecTmp.end());
+
+                cout << "*****in gene" << endl;
+            for each (auto var in pts)
+            {
+                cout << var << endl;
+            }
+
+            i += vecTmp.size();
             k++;
         }
     }
+
 }
 
 
