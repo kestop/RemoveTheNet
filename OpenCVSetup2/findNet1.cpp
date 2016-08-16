@@ -43,12 +43,14 @@ void maskDisplay();
 void findLines(int, void*);
 void generateTheNet();
 int getGridPointsNumber(double l1, double l2, double ld);
-void predictJoints(vector<vector<Point>> &pp);
-void expandJointsToWholeNet(vector<vector<Point>> &pp);
+void predictGapJoints(vector<vector<Point>> &pp);
+void initJtss(const vector<vector<Point>>& pp, vector<vector<Point>>& Jtss);
+void extendTopOrLeft(vector<vector<Point>>& pp, vector<vector<Point>>& Jtss, double dx, double dy, size_t i, size_t sz);
+void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss);
 bool outOfImage(Point p);
 double getTheD(vector<Point> p, int xORy);
 void predictPoints(const vector<cv::Point> pts, vector<double>& gapJts);
-void avgGapJoints(const vector<vector<double>> gJ, double fGJ[]);
+void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[]);
 void generateJoints(double fGJ[], vector<Point> &pts);
 bool nextLine(Point seed);
 
@@ -58,7 +60,9 @@ bool nextLine(Point seed);
 vector<Point> points;
 vector<vector<Point>> priorPoints;
 vector<Point> priorRow;
-size_t rowNo = 0;
+vector<vector<Point>> horJtss;
+vector<vector<Point>> verJtss;//hardcode 100
+
 int flag = 'n';
 int min_threshold = 50;
 int max_trackbar = 150;
@@ -257,7 +261,7 @@ void generateTheNet()
     priorPoints.push_back(priorRow);
     //vertical 
     vector<vector<Point>> verticalPtss;
-    for (size_t i = 0; i < priorPoints[0].size(); i++)
+    for (size_t i = 0; i < priorPoints[0].size(); i++)//priorPoints's cols have the same size 
     {
         vector<Point> verticalPts;
         for (size_t j = 0; j < priorPoints.size(); j++)
@@ -267,39 +271,41 @@ void generateTheNet()
         verticalPtss.push_back(verticalPts);
     }
 
-    predictJoints(verticalPtss);
-    expandJointsToWholeNet(verticalPtss);
+    predictGapJoints(verticalPtss);
+    expandJointsToWholeNet(verticalPtss,horJtss);
 
-    //horizontal
-    vector < vector<Point> > horizontalPtss;
-    for (size_t i = 0; i < verticalPtss[0].size(); i++)
-    {
-        vector<Point> horizontalPts;
-        for (size_t j = 0; j < verticalPtss.size(); j++)
-        {
-            horizontalPts.push_back(verticalPtss[j][i]);
-        }
-        horizontalPtss.push_back(horizontalPts);
-    }
+    polylines(image, horJtss, false, Scalar(0, 255, 0), 1);
+    
+    //make horizontal Ptss
+    //vector < vector<Point> > horizontalPtss;
+    //for (size_t i = 0; i < verticalPtss[0].size(); i++)// what if Pts.size() is larger at the end?
+    //{
+    //    vector<Point> horizontalPts;
+    //    for (size_t j = 0; j < verticalPtss.size(); j++)
+    //    {
+    //        horizontalPts.push_back(verticalPtss[j][i]);
+    //    }
+    //    horizontalPtss.push_back(horizontalPts);
+    //}
 
-    predictJoints(horizontalPtss);
-    expandJointsToWholeNet(horizontalPtss);
+    //predictGapJoints(horizontalPtss);
+    //expandJointsToWholeNet(horizontalPtss);
+    //final vertical 
+    //vector<vector<Point>> verticalPtss2;
+    //for (size_t i = 0; i < horizontalPtss[0].size(); i++)
+    //{
+    //    vector<Point> verticalPts2;
+    //    for (size_t j = 0; j < horizontalPtss.size(); j++)
+    //    {
+    //        verticalPts2.push_back(horizontalPtss[j][i]);
+    //    }
+    //    verticalPtss2.push_back(verticalPts2);
+    //}
 
-    vector<vector<Point>> verticalPtss2;
-    for (size_t i = 0; i < horizontalPtss[0].size(); i++)
-    {
-        vector<Point> verticalPts2;
-        for (size_t j = 0; j < horizontalPtss.size(); j++)
-        {
-            verticalPts2.push_back(horizontalPtss[j][i]);
-        }
-        verticalPtss2.push_back(verticalPts2);
-    }   
-
-    polylines(image, verticalPtss2, false, Scalar::all(255), 2);
-    polylines(image, horizontalPtss, false, Scalar::all(255),2);
-    polylines(mask, verticalPtss2, false, Scalar::all(255), 2);
-    polylines(mask, horizontalPtss, false, Scalar::all(255),2);
+    //polylines(image, verticalPtss2, false, Scalar::all(255), 2);
+    //polylines(image, horizontalPtss, false, Scalar::all(255), 1);
+    ////polylines(mask, verticalPtss2, false, Scalar::all(255), 2);
+    //polylines(mask, horizontalPtss, false, Scalar::all(255), 1);
 
 
 
@@ -307,7 +313,7 @@ void generateTheNet()
     imshow(wndName2, mask);
 }
 
-void predictJoints(vector<vector<Point>> &pp)
+void predictGapJoints(vector<vector<Point>> &pp)
 {
     int n = 0;
     const size_t sz = pp.size();
@@ -326,48 +332,83 @@ void predictJoints(vector<vector<Point>> &pp)
         generateJoints(finalGapJointsNum, pp[i]);
     }
 }
-
-void expandJointsToWholeNet(vector<vector<Point>> &pp)
+//put the square into the Jtss
+void initJtss(const vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)
 {
+    //Jtss.size() == pp[0].size();
+    for (size_t i = 0; i < pp[0].size(); i++)
+    {
+        Jtss.push_back(vector<Point>());
+    }
+    for (size_t i = 0; i < pp[0].size(); i++)
+    {
+        for (size_t j = 0; j < pp.size(); j++)
+        {
+            Jtss[i].push_back(pp[j][i]);
+        }
+    }
+}
+
+void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy, size_t i, size_t sz)
+{
+    vector<Point> vecTmp;
+    for (size_t j = 1; ; j++)
+    {
+        double pX = pp[i].front().x + dx*j;
+        double pY = pp[i].front().y + dy*j;
+        Point tmp = Point(pX, pY);
+        if (!outOfImage(tmp))
+            break;
+        vecTmp.push_back(tmp);
+        if (j > Jtss.size() - sz)
+        {
+            Jtss.push_back(vector<Point>());
+        }
+        Jtss[j + sz - 1].push_back(tmp);
+
+        circle(image, tmp, 3, Scalar(0, 0, 255), -1);
+        circle(mask, tmp, 3, Scalar(255), -1);
+    }
+    pp[i].insert(pp[i].begin(), vecTmp.rbegin(), vecTmp.rend());
+
+
+    vecTmp.clear();
+}
+
+void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy, size_t i, size_t sz)
+{
+    for (size_t k = 1;; k++)
+    {
+        cout << "/n *pp[i].end() : " << (*(&(pp[i].back()) - k + 1)).y << endl;
+        double pX = (*(&(pp[i].back()) - k + 1)).x - dx*k;
+        double pY = (*(&(pp[i].back()) - k + 1)).y - dy*k;
+        cout << "\npX " << pX << endl;
+        cout << "\npY " << pY << endl;
+        Point tmp = Point(int(round(pX)), int(round(pY)));
+        cout << "\ntmp in bottom gene : " << tmp << endl;
+        if (!outOfImage(tmp))
+            break;
+        pp[i].push_back(tmp);
+        circle(image, tmp, 3, Scalar(0, 0, 255), -1);
+        circle(mask, tmp, 3, Scalar(255), -1);
+    }
+}
+
+void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)//???
+{
+    initJtss(pp, Jtss);
+    const size_t sz = pp[0].size();
+    //go through joints vector
     for (size_t i = 0; i < pp.size(); i++)
     {
         double dX = getTheD(pp[i], 1);
         double dY = getTheD(pp[i], 0);
-        vector<Point> vecTmp;
-        for (size_t j = 1; ; j++)
-        {
-            double pX = pp[i].front().x + dX*j;
-            double pY = pp[i].front().y + dY*j;
-            Point tmp = Point(pX, pY);
-            if (!outOfImage(tmp))
-                break;
-            vecTmp.push_back(tmp);
-            circle(image, tmp, 3, Scalar(0, 0, 255), -1);
-            circle(mask, tmp, 3, Scalar(255), -1);
-        }
-        pp[i].insert(pp[i].begin(), vecTmp.rbegin(), vecTmp.rend());
-        cout << "********* in expand. chosen vertical col" << endl;
-        for each (auto var in pp[i])
-        {
-            cout << var << endl;
-        }
-        vecTmp.clear();
-        
-        for (size_t k = 1;; k++)
-        {
-            cout << "/n *pp[i].end() : " << (*(&(pp[i].back())-k+1)).y << endl;
-            double pX = (*(&(pp[i].back()) - k + 1)).x - dX*k;
-            double pY = (*(&(pp[i].back()) - k + 1)).y - dY*k;
-            cout << "\npX " << pX << endl;
-            cout << "\npY " << pY << endl;
-            Point tmp = Point(int(round(pX)), int(round(pY)));
-            cout << "\ntmp in bottom gene : " << tmp << endl;
-            if (!outOfImage(tmp))
-                break;
-            pp[i].push_back(tmp);
-            circle(image, tmp, 3, Scalar(0, 0, 255), -1);
-            circle(mask, tmp, 3, Scalar(255), -1);
-        }
+        //top or left part
+
+        extendTopOrLeft(pp, Jtss, dX, dY, i, sz);
+
+        //the bottom or right part
+        extendBottomOrRight(pp, Jtss, dX, dY, i, sz);
     }
 }
 
@@ -432,8 +473,11 @@ void predictPoints(const vector<cv::Point> pts, vector<double> &gapJtsNum)
     }
 }
 
-//???
-void avgGapJoints(const vector<vector<double>> gJ, double fGJ[])
+/*@brief To calculate the avg joints number in gaps
+@param gj vector<vector<double>> matrix stored the number of joints in gaps
+@param [] to store the average number of joints for user defined joints
+*/
+void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[])
 {
     for (size_t col = 0; col < gJ.front().size(); col++)
     {
@@ -442,22 +486,24 @@ void avgGapJoints(const vector<vector<double>> gJ, double fGJ[])
             fGJ[col] += gJ[row][col];
         }
         fGJ[col] /= (int)gJ.size();
-        cout << "/nfGJ[" << col << "]" << fGJ[col] << endl;
+        cout << "/nfGJ[" << col << "] = " << fGJ[col] << endl;
     }
 }
 
+/*@brief To generate the joints between user defined joints
+@param double [] the number of joints in gaps
+@param pts Handled points vector
+*/
 void generateJoints(double fGJ[], vector<Point> &pts)
 {
-    const size_t sz = pts.size();
     int k = 0;
-    for (size_t i = 0; i < pts.size()-3; i++)
+    for (size_t i = 0; i < pts.size() - 3; i++)
     {
         int n = int(round(fGJ[k]));
         double l1 = length(pts[i], pts[i + 1]);
         double l2 = length(pts[i + 1], pts[i + 2]);
         if (l2 > 2 * l1)
         {
-
             l2 = length(pts[i + 2], pts[i + 3]);
             double dX = ((pts[i].x - pts[i + 2].x) +
                 (pts[i + 1].x - pts[i + 3].x)) / (2.0 * (n + 1));
@@ -471,21 +517,12 @@ void generateJoints(double fGJ[], vector<Point> &pts)
             {
                 Point tmp = Point(round(pts[i + 1].x - j*dX), round(pts[i + 1].y - j*dY));
                 cout << tmp << endl;
-                //pts.insert(pts.begin()+i+1,tmp);
-                //pts.push_back(tmp);
                 vecTmp.push_back(tmp);
-                circle(image, tmp, 2, Scalar(0, 0, 255), FILLED);
+                circle(image, tmp, 2, Scalar(0, 255, 0), FILLED);
                 circle(mask, tmp, 2, Scalar::all(255), FILLED);
             }
             //Insert to keep ordered
             pts.insert(pts.begin() + i + 2, vecTmp.begin(), vecTmp.end());
-
-                cout << "*****in gene" << endl;
-            for each (auto var in pts)
-            {
-                cout << var << endl;
-            }
-
             i += vecTmp.size();
             k++;
         }
@@ -494,7 +531,7 @@ void generateJoints(double fGJ[], vector<Point> &pts)
 }
 
 
-/** @breif To get the number of the line segements, when l1 > l2, we have :
+/** @brief To get the number of the line segements, when l1 > l2, we have :
 ds = (l1-l2)/(n+1);
 (l2 + ds)+(l2 + 2*ds)+....+(l2+n*ds) = ld => n*l2 + (n(n+1)/2)*ds = ld => n = 2c/(a+b)
 @param l1 line segement 1
