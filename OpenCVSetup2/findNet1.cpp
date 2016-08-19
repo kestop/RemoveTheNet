@@ -24,6 +24,7 @@ const string wndName2("Mask");
 
 static void onMouse(int event, int x, int y, int, void*);
 static void onMouseForMaskWnd(int event, int x, int y, int, void*);
+void hardPriorPts();
 static double angle(Point p1, Point p2);
 static double length(Point p1, Point p2);
 void defineFourEdges(vector<double> angles, double lineLength);
@@ -34,6 +35,8 @@ void makeMask(const vector<Vec4i> lines,
 void drawSquare(Mat& src, Mat& dst);
 void help();
 void eventLoop();
+void drawTheNet();
+void sortVector(vector<vector<Point>>& pp, int xORy);
 void inpaintWithMask();
 void processVideo(const int startFrameIndex);
 void Erosion(Mat& src, Mat& erosion_dst);
@@ -43,15 +46,19 @@ void maskDisplay();
 void findLines(int, void*);
 void generateTheNet();
 int getGridPointsNumber(double l1, double l2, double ld);
+void getDiff(int c0, int c1, int c2, int c3, int n, double &d, double &ds);
 void predictGapJoints(vector<vector<Point>> &pp);
 void initJtss(const vector<vector<Point>>& pp, vector<vector<Point>>& Jtss);
-void extendTopOrLeft(vector<vector<Point>>& pp, vector<vector<Point>>& Jtss, double dx, double dy, size_t i, size_t sz);
+void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy,
+    size_t i, size_t sz, double dxs, double dys);
+void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss,
+    double dx, double dy, size_t i, size_t sz, double dxs, double dys);
 void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss);
 bool outOfImage(Point p);
 double getTheD(vector<Point> p, int xORy);
-void predictPoints(const vector<cv::Point> pts, vector<double>& gapJts);
+void predictGapPointsNum(const vector<cv::Point> pts, vector<double>& gapJts);
 void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[]);
-void generateJoints(double fGJ[], vector<Point> &pts);
+void generateGapJoints(double fGJ[], vector<Point> &pts);
 bool nextLine(Point seed);
 
 
@@ -61,7 +68,7 @@ vector<Point> points;
 vector<vector<Point>> priorPoints;
 vector<Point> priorRow;
 vector<vector<Point>> horJtss;
-vector<vector<Point>> verJtss;//hardcode 100
+vector<vector<Point>> verJtss;
 
 int flag = 'n';
 int min_threshold = 50;
@@ -74,6 +81,8 @@ bool maskDisplaying = false;
 bool pressDraw = true;//not applied yet
 vector<double> angles = { 65,-88,-6,13 }; //default angels and lineLength
 double lineLength = 100;
+
+#define DEBUG
 
 int main(int argc, char* argv[])
 {
@@ -240,26 +249,96 @@ void eventLoop()
             pressDraw = pressDraw ? false : true;
             break;
             //for new features
+            //'l' allows to add more rows but cannot modify current row length 
         case 'l':
             flag = 'l'; cout << char(flag) << endl;
-            cout << "Prior Points selection" << endl;
+
+            hardPriorPts();
+            verJtss.clear();
+            horJtss.clear();
+            image0.copyTo(image);
+            mask = Scalar::all(0);
+            for each (auto p in priorPoints)
+            {
+                for each (auto var in p)
+                {
+                    circle(image, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+                    circle(mask, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+                }
+            }
+            cout << "Prior Points Selection. Press 'l' again to restore image and modify base points." << endl;
             break;
         case 'a':
             flag = 'a'; cout << char(flag) << endl;
             cout << "Predict points and draw them" << endl;
             generateTheNet();
             break;
+        case 'b':
+            flag = 'b'; cout << char(flag) << endl;
+            drawTheNet();
+            break;
+
+            //clear everything and restart
+        case 'z':
+            flag = 'l'; cout << char(flag) << endl;
+            image0.copyTo(image);
+            mask = Scalar::all(0);
+            verJtss.clear();
+            horJtss.clear();
+            priorPoints.clear();
+            priorRow.clear();
+            break;
+
         default:
             break;
         }
     }
 }
-//@brief Count the distance using the edges and the prior points
-//invoking predictPoints()
+
+//sort vector . 1 in y , 0 in x
+void sortVector(vector<vector<Point>> &pp, int xORy)
+{
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+        for (size_t j = 0; j < pp[i].size() - 1; j++)
+        {
+            for (size_t k = 0; k < pp[i].size() - j - 1; k++)
+            {
+                if (xORy > 0)
+                {
+                    if (pp[i][k].y > pp[i][k + 1].y)
+                    {
+                        Point tmp = pp[i][k + 1];
+                        pp[i][k] = pp[i][k + 1];
+                        pp[i][k + 1] = tmp;
+                    }
+                }
+                else
+                {
+                    if (pp[i][k].x > pp[i][k + 1].x)
+                    {
+                        Point tmp = pp[i][k + 1];
+                        pp[i][k] = pp[i][k + 1];
+                        pp[i][k + 1] = tmp;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/*@brief Top level fucntion when using user-define points technique.
+Based on priorPoints[][]
+*/
 void generateTheNet()
 {
-    priorPoints.push_back(priorRow);
-    //vertical 
+    if (!priorRow.empty())
+    {
+        priorPoints.push_back(priorRow);
+        priorRow.clear();
+    }
+
+    //change to vertical . Actually, we can skip this 
     vector<vector<Point>> verticalPtss;
     for (size_t i = 0; i < priorPoints[0].size(); i++)//priorPoints's cols have the same size 
     {
@@ -272,66 +351,14 @@ void generateTheNet()
     }
 
     predictGapJoints(verticalPtss);
-    expandJointsToWholeNet(verticalPtss,horJtss);
+    expandJointsToWholeNet(verticalPtss, horJtss);
 
-    polylines(image, horJtss, false, Scalar(0, 255, 0), 1);
-    
-    //make horizontal Ptss
-    //vector < vector<Point> > horizontalPtss;
-    //for (size_t i = 0; i < verticalPtss[0].size(); i++)// what if Pts.size() is larger at the end?
-    //{
-    //    vector<Point> horizontalPts;
-    //    for (size_t j = 0; j < verticalPtss.size(); j++)
-    //    {
-    //        horizontalPts.push_back(verticalPtss[j][i]);
-    //    }
-    //    horizontalPtss.push_back(horizontalPts);
-    //}
-
-    //predictGapJoints(horizontalPtss);
-    //expandJointsToWholeNet(horizontalPtss);
-    //final vertical 
-    //vector<vector<Point>> verticalPtss2;
-    //for (size_t i = 0; i < horizontalPtss[0].size(); i++)
-    //{
-    //    vector<Point> verticalPts2;
-    //    for (size_t j = 0; j < horizontalPtss.size(); j++)
-    //    {
-    //        verticalPts2.push_back(horizontalPtss[j][i]);
-    //    }
-    //    verticalPtss2.push_back(verticalPts2);
-    //}
-
-    //polylines(image, verticalPtss2, false, Scalar::all(255), 2);
-    //polylines(image, horizontalPtss, false, Scalar::all(255), 1);
-    ////polylines(mask, verticalPtss2, false, Scalar::all(255), 2);
-    //polylines(mask, horizontalPtss, false, Scalar::all(255), 1);
-
-
-
-    imshow(wndName, image);
-    imshow(wndName2, mask);
+    predictGapJoints(horJtss);
+    expandJointsToWholeNet(horJtss, verJtss);
+    sortVector(verJtss, 1);
 }
 
-void predictGapJoints(vector<vector<Point>> &pp)
-{
-    int n = 0;
-    const size_t sz = pp.size();
-    vector<vector<double>> gapJointsNum(sz);
 
-    double finalGapJointsNum[10] = { 0 };
-
-    cout << "Gap Size : " << gapJointsNum.size() << endl;
-    for (size_t i = 0; i < sz; i++)
-    {
-        predictPoints(pp[i], gapJointsNum[i]);
-    }
-    avgGapJoints(gapJointsNum, finalGapJointsNum);
-    for (size_t i = 0; i < sz; i++)
-    {
-        generateJoints(finalGapJointsNum, pp[i]);
-    }
-}
 //put the square into the Jtss
 void initJtss(const vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)
 {
@@ -349,17 +376,81 @@ void initJtss(const vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)
     }
 }
 
-void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy, size_t i, size_t sz)
+void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)//???
+{
+    initJtss(pp, Jtss);
+
+    const size_t sz = pp[0].size();
+    vector<double> dx = { 0 };
+    vector<double> dy = { 0 };
+    vector<double> dxs = { 0 };
+    vector<double> dys = { 0 };
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+        getDiff(pp[i].front().x, (*(&(pp[i].front()) + 1)).x, (*(&(pp[i].back()) - 1)).x,
+            pp[i].back().x, int(pp[i].size()) - 3, dx[i], dxs[i]);
+        getDiff(pp[i].front().y, (*(&(pp[i].front()) + 1)).y, (*(&(pp[i].back()) - 1)).y,
+            pp[i].back().y, int(pp[i].size()) - 3, dy[i], dys[i]);
+
+        cout << pp[i].front() << endl;
+        cout << (*(&(pp[i].front()) + 1)) << endl;
+        cout << (*(&(pp[i].back()) - 1)) << endl;
+        cout << pp[i].back() << endl;
+
+
+        cout << "DX : " << dx[i] << " DXS: " << dxs[i] << endl;
+        cout << "DY : " << dy[i] << " DYS: " << dys[i] << endl;
+
+    }
+
+    //top or left part
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+
+        //double dX = getTheD(pp[i], 1);
+        //dx[i] = dX;
+        //double dY = getTheD(pp[i], 0);
+        //dy[i] = dY;
+
+        extendTopOrLeft(pp, Jtss, dx[i], dy[i], i, sz, dxs[i], dys[i]);
+    }
+
+    //the bottom or right part
+    const size_t sz2 = Jtss.size();
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+        extendBottomOrRight(pp, Jtss, dx[i], dy[i], i, sz2,dxs[i],dys[i]);
+    }
+}
+
+void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy,
+    size_t i, size_t sz, double dxs, double dys)
 {
     vector<Point> vecTmp;
+    cout << "tmp" << endl;
     for (size_t j = 1; ; j++)
     {
-        double pX = pp[i].front().x + dx*j;
-        double pY = pp[i].front().y + dy*j;
-        Point tmp = Point(pX, pY);
+        double pX = round(pp[i].front().x - dx*j - j*(j + 1)*dxs / 2);
+        double pY = round(pp[i].front().y - dy*j - j*(j + 1)*dys / 2);
+        Point tmp = Point(int(pX), int(pY));
+        cout << tmp << endl;
+
         if (!outOfImage(tmp))
             break;
+        if (i >= 1)
+        {
+
+            cout << "1" << endl;
+            cout << "dx" << dx << " dxs" << dxs << endl;
+            cout << "dy" << dy << " dys" << dys << endl;
+
+        }
         vecTmp.push_back(tmp);
+        if (i >= 1)
+        {
+
+            cout << "2" << endl;
+        }
         if (j > Jtss.size() - sz)
         {
             Jtss.push_back(vector<Point>());
@@ -371,46 +462,35 @@ void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, dou
     }
     pp[i].insert(pp[i].begin(), vecTmp.rbegin(), vecTmp.rend());
 
-
     vecTmp.clear();
 }
 
-void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy, size_t i, size_t sz)
+void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss,
+    double dx, double dy, size_t i, size_t sz, double dxs, double dys)
 {
+
     for (size_t k = 1;; k++)
     {
-        cout << "/n *pp[i].end() : " << (*(&(pp[i].back()) - k + 1)).y << endl;
-        double pX = (*(&(pp[i].back()) - k + 1)).x - dx*k;
-        double pY = (*(&(pp[i].back()) - k + 1)).y - dy*k;
-        cout << "\npX " << pX << endl;
-        cout << "\npY " << pY << endl;
+        double pX = (*(&(pp[i].back()) - k + 1)).x + dx*k + k*(k + 1)*dxs / 2;
+        double pY = (*(&(pp[i].back()) - k + 1)).y + dy*k + k*(k + 1)*dys / 2;
+
         Point tmp = Point(int(round(pX)), int(round(pY)));
-        cout << "\ntmp in bottom gene : " << tmp << endl;
         if (!outOfImage(tmp))
             break;
+        cout << "\ntmp in bottom gene : " << tmp << endl;
         pp[i].push_back(tmp);
+        if (k > Jtss.size() - sz)
+        {
+            Jtss.push_back(vector<Point>());
+        }
+
+        Jtss[k + sz - 1].push_back(tmp);
+
         circle(image, tmp, 3, Scalar(0, 0, 255), -1);
         circle(mask, tmp, 3, Scalar(255), -1);
     }
 }
 
-void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)//???
-{
-    initJtss(pp, Jtss);
-    const size_t sz = pp[0].size();
-    //go through joints vector
-    for (size_t i = 0; i < pp.size(); i++)
-    {
-        double dX = getTheD(pp[i], 1);
-        double dY = getTheD(pp[i], 0);
-        //top or left part
-
-        extendTopOrLeft(pp, Jtss, dX, dY, i, sz);
-
-        //the bottom or right part
-        extendBottomOrRight(pp, Jtss, dX, dY, i, sz);
-    }
-}
 
 bool outOfImage(Point p)
 {
@@ -448,27 +528,56 @@ double getTheD(vector<Point> p, int xORy)
     }
     return (sum /= sz);
 }
+/*@brief To predict the joints within the square
+*/
+void predictGapJoints(vector<vector<Point>> &pp)
+{
+    int n = 0;
+    const size_t sz = pp.size();
+    vector<vector<double>> gapJointsNum(sz);
 
+    double finalGapJointsNum[10] = { 0 };
+
+    cout << "Gap Size : " << gapJointsNum.size() << endl;
+    for (size_t i = 0; i < sz; i++)
+    {
+        predictGapPointsNum(pp[i], gapJointsNum[i]);
+    }
+    cout << "enter avgGap " << endl;
+    avgGapJoints(gapJointsNum, finalGapJointsNum);
+    for (size_t i = 0; i < sz; i++)
+    {
+        generateGapJoints(finalGapJointsNum, pp[i]);
+    }
+}
 
 /** @brief To Predict Points on a prior knowledge of user defined points
 The points has to be started with one grid segement, not two or more.
 Work on both vertical and horizontal situations.
 @param pts A vector of cv::Point to detemine a line. Number of points needs to be even.
 */
-void predictPoints(const vector<cv::Point> pts, vector<double> &gapJtsNum)
+void predictGapPointsNum(const vector<cv::Point> pts, vector<double> &gapJtsNum)
 {
     const size_t sz = pts.size();
-    for (size_t i = 0; i < sz - 3; i++)
+    if (pts.size() < 4)
     {
-        double l1 = length(pts[i], pts[i + 1]);
-        double l2 = length(pts[i + 1], pts[i + 2]);
-        //To generate or not
-        if (l2 > 2 * l1)
+        gapJtsNum.push_back(0);
+    }
+    else
+    {
+        for (size_t i = 0; i < sz - 3; i++)
         {
-            double ld = l2;
-            l2 = length(pts[i + 2], pts[i + 3]);
-            int n = getGridPointsNumber(l1, l2, ld);
-            gapJtsNum.push_back(n);
+
+            double l1 = length(pts[i], pts[i + 1]);
+            double l2 = length(pts[i + 1], pts[i + 2]);
+            if (l2 > 1.5 * l1)
+            {
+                double ld = l2;
+                l2 = length(pts[i + 2], pts[i + 3]);
+                int n = getGridPointsNumber(l1, l2, ld);
+                cout << "n: " << n << endl;
+                gapJtsNum.push_back(n);
+            }
         }
     }
 }
@@ -477,15 +586,15 @@ void predictPoints(const vector<cv::Point> pts, vector<double> &gapJtsNum)
 @param gj vector<vector<double>> matrix stored the number of joints in gaps
 @param [] to store the average number of joints for user defined joints
 */
-void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[])
+void avgGapJoints(const vector<vector<double>> &gapJointsNum, double fGJ[])
 {
-    for (size_t col = 0; col < gJ.front().size(); col++)
+    for (size_t col = 0; col < gapJointsNum.front().size(); col++)
     {
-        for (size_t row = 0; row < gJ.size(); row++)
+        for (size_t row = 0; row < gapJointsNum.size(); row++)
         {
-            fGJ[col] += gJ[row][col];
+            fGJ[col] += gapJointsNum[row][col];
         }
-        fGJ[col] /= (int)gJ.size();
+        fGJ[col] /= (int)gapJointsNum.size();
         cout << "/nfGJ[" << col << "] = " << fGJ[col] << endl;
     }
 }
@@ -494,40 +603,41 @@ void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[])
 @param double [] the number of joints in gaps
 @param pts Handled points vector
 */
-void generateJoints(double fGJ[], vector<Point> &pts)
+void generateGapJoints(double fGJ[], vector<Point> &pts)
 {
     int k = 0;
-    for (size_t i = 0; i < pts.size() - 3; i++)
+    if (pts.size() >= 4)
     {
-        int n = int(round(fGJ[k]));
-        double l1 = length(pts[i], pts[i + 1]);
-        double l2 = length(pts[i + 1], pts[i + 2]);
-        if (l2 > 2 * l1)
+        for (size_t i = 0; i < pts.size() - 3; i++)
         {
-            l2 = length(pts[i + 2], pts[i + 3]);
-            double dX = ((pts[i].x - pts[i + 2].x) +
-                (pts[i + 1].x - pts[i + 3].x)) / (2.0 * (n + 1));
-            double dY = ((pts[i].y - pts[i + 2].y) +
-                (pts[i + 1].y - pts[i + 3].y)) / (2.0 * (n + 1));
-            cout << "DX : " << dX << endl;
-            cout << "DY : " << dY << endl;
-
-            vector<Point> vecTmp;
-            for (size_t j = 1; j < n; j++)
+            int n = int(round(fGJ[k]));//n only represents the number of line segements in gap
+            double l1 = length(pts[i], pts[i + 1]);
+            double l2 = length(pts[i + 1], pts[i + 2]);
+            if (l2 > 1.5 * l1)
             {
-                Point tmp = Point(round(pts[i + 1].x - j*dX), round(pts[i + 1].y - j*dY));
-                cout << tmp << endl;
-                vecTmp.push_back(tmp);
-                circle(image, tmp, 2, Scalar(0, 255, 0), FILLED);
-                circle(mask, tmp, 2, Scalar::all(255), FILLED);
+                l2 = length(pts[i + 2], pts[i + 3]);
+                double dX, dXS, dY, dYS;
+                getDiff(pts[i].x, pts[i + 1].x, pts[i + 2].x, pts[i + 3].x, n, dX, dXS);
+                getDiff(pts[i].y, pts[i + 1].y, pts[i + 2].y, pts[i + 3].y, n, dY, dYS);
+
+                vector<Point> vecTmp;
+                //cout << "tmp in Generate Gap Points" << endl;
+                for (size_t j = 1; j < n; j++)
+                {
+                    Point tmp = Point(int(round(pts[i + 1].x + j*dX + ((j*(j + 1)) / 2)*dXS)),
+                        int(round(pts[i + 1].y + j*dY + ((j*(j + 1)) / 2)*dYS)));
+                    //cout << tmp << endl;
+                    vecTmp.push_back(tmp);
+                    circle(image, tmp, 2, Scalar(0, 255, 0), FILLED);
+                    circle(mask, tmp, 2, Scalar::all(255), FILLED);
+                }
+                //Insert to keep ordered
+                pts.insert(pts.begin() + i + 2, vecTmp.begin(), vecTmp.end());
+                i += vecTmp.size();
+                k++;
             }
-            //Insert to keep ordered
-            pts.insert(pts.begin() + i + 2, vecTmp.begin(), vecTmp.end());
-            i += vecTmp.size();
-            k++;
         }
     }
-
 }
 
 
@@ -541,8 +651,24 @@ ds = (l1-l2)/(n+1);
 int getGridPointsNumber(double l1, double l2, double ld)
 {
     double n = (2 * ld) / (l1 + l2);
-    cout << "n: " << n << endl;
     return int(round(n));
+}
+/*@brief diff between the c1 and c2 and c3
+c1 + n*dd +(n+1)*n/2*ds = c2
+c1 + (n+1)*dd + (n+2)*(n+1)*ds/2 = c3
+
+*/
+void getDiff(int c0, int c1, int c2, int c3, int n, double &d, double &ds)
+{
+    double d1, d2, ds1, ds2;
+    d1 = (double(c2) - double(n)*c3 / (n + 2) - double(2)*c1 / (n + 2))*((n + 2) / double(n));
+    d2 = (double(c2) - double(n + 1)*c3 / (n + 3) - double(2)*c0 / (n + 3))*((n + 3) / double(n + 1));
+
+    ds1 = (double(2) / (n + 1))*(double(c1) / n + c3 - (n + 1)*c2 / double(n));
+    ds2 = (double(2) / (n + 2))*(double(c0) / (n + 1) + c3 - (n + 2)*c2 / double(n + 1));
+
+    d = (d1 + d2) / 2;
+    ds = (ds1 + ds2) / 2;
 }
 
 
@@ -800,6 +926,34 @@ static void onMouseForMaskWnd(int event, int x, int y, int, void*)
         }
     }
 }
+//helper function
+void hardPriorPts()
+{
+    vector<vector<Point>> pp;
+    vector<Point> a;
+    a.push_back(Point(338, 190));
+    a.push_back(Point(373, 189));
+    a.push_back(Point(821, 187));
+    a.push_back(Point(859, 187));
+    vector<Point> b = { Point(345,222),Point(375,224),Point(821,223),Point(854,226) };
+    vector<Point> c = { Point(365, 510), Point(399, 509), Point(810, 513), Point(842, 513) };
+    vector<Point> d = { Point(371, 538), Point(400, 539), Point(809, 543), Point(840, 544) };
+    vector<Point> e = { Point(395, 481), Point(428, 480), Point(681, 480), Point(711, 481) };
+    vector<Point> f = { Point(396, 510), Point(429, 517), Point(673, 510), Point(715, 509) };
+    vector<Point> g = { Point(410, 600), Point(436, 600), Point(681, 599), Point(708, 601) };
+    vector<Point> h = { Point(407, 626), Point(437, 626), Point(682, 629), Point(715, 630) };
+    priorPoints = pp = { a,b,c,d };
+}
+
+
+void drawTheNet()
+{
+    polylines(image, horJtss, false, Scalar(0, 255, 0), 1);
+    polylines(mask, horJtss, false, Scalar::all(255), 1);
+    polylines(image, verJtss, false, Scalar(255, 0, 0), 1);
+    polylines(mask, verJtss, false, Scalar::all(255), 1);
+}
+
 
 //HELP info
 void help()
