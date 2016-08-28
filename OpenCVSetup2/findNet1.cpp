@@ -5,64 +5,8 @@
 #include <opencv2\photo.hpp>
 #include <opencv2\videoio.hpp>
 
-#include <iostream>
-#include <string>
-#include <cmath>
-#include <ctime>
 
-using namespace cv;
-using namespace std;
-
-
-Mat image0, image, mask;
-Mat gray, edges, pyr;
-const string videoName("./videos/ActionIndoorSportsBristolCam2.mp4");
-const string outputName("./output/sample4.avi");
-const string wndName("Image");
-const string wndName2("Mask");
-
-
-static void onMouse(int event, int x, int y, int, void*);
-static void onMouseForMaskWnd(int event, int x, int y, int, void*);
-void hardPriorPts();
-static double angle(Point p1, Point p2);
-static double length(Point p1, Point p2);
-void defineFourEdges(vector<double> angles, double lineLength);
-bool ifAtCenter(Point p1, Point p2, const Mat & image);
-void findNet(const Mat& image, vector<double> angles, double lineLength);
-void makeMask(const vector<Vec4i> lines,
-    const vector<double> angles, const double lineLength);
-void drawSquare(Mat& src, Mat& dst);
-void help();
-void eventLoop();
-void drawTheNet();
-void sortVector(vector<vector<Point>>& pp, int xORy);
-void inpaintWithMask();
-void processVideo(const int startFrameIndex);
-void Erosion(Mat& src, Mat& erosion_dst);
-void Dilation(Mat& src, Mat& dilation_dst);
-void capAFrameFromVideo(const int frameIndex);
-void maskDisplay();
-void findLines(int, void*);
-void generateTheNet();
-int getGridPointsNumber(double l1, double l2, double ld);
-void getDiff(int c0, int c1, int c2, int c3, int n, double &d, double &ds);
-void predictGapJoints(vector<vector<Point>> &pp);
-void initJtss(const vector<vector<Point>>& pp, vector<vector<Point>>& Jtss);
-void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy,
-    size_t i, size_t sz, double dxs, double dys);
-void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss,
-    double dx, double dy, size_t i, size_t sz, double dxs, double dys);
-void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss);
-bool outOfImage(Point p);
-double getTheD(vector<Point> p, int xORy);
-void predictGapPointsNum(const vector<cv::Point> pts, vector<double>& gapJts);
-void avgGapJoints(const vector<vector<double>> &gJ, double fGJ[]);
-void generateGapJoints(double fGJ[], vector<Point> &pts);
-bool nextLine(Point seed);
-
-
-
+#include "Header.h"
 
 vector<Point> points;
 vector<vector<Point>> priorPoints;
@@ -75,12 +19,14 @@ int min_threshold = 50;
 int max_trackbar = 150;
 int trackbar = max_trackbar / 2;
 int circleRadius = 2;
+bool DilateOrErode = true;
+bool pyrDownOrUp = false;
 bool eraseMode = false;
 bool mouseDown = false;
 bool maskDisplaying = false;
 bool pressDraw = true;//not applied yet
-vector<double> angles = { 65,-88,-6,13 }; //default angels and lineLength
-double lineLength = 100;
+vector<double> angles = { 81.9,-79.8,-1.22,2.87 }; //default angels and lineLength \ / -up -down 81.9 -79.8 -1.22 2.87
+double lineLength = 130;
 
 #define DEBUG
 
@@ -258,6 +204,7 @@ void eventLoop()
             horJtss.clear();
             image0.copyTo(image);
             mask = Scalar::all(0);
+
             for each (auto p in priorPoints)
             {
                 for each (auto var in p)
@@ -289,13 +236,45 @@ void eventLoop()
             priorRow.clear();
             break;
 
+        case 'u':
+            flag = 'u';
+
+            break;
+        case 'y':
+            flag = 'y';
+            templateMatching();
+            break;
         default:
             break;
         }
     }
 }
 
-//sort vector . 1 in y , 0 in x
+
+
+void templateMatching()
+{
+    int result_cols = image.cols - sample.cols + 1;
+    int result_rows = image.rows - sample.rows + 1;
+    result.create(result_rows, result_cols, CV_32FC1);
+    matchTemplate(image, sample, result, CV_TM_CCOEFF);
+    normalize(result, result, 0, 1, NORM_MINMAX, -1, Mat());
+    double minVal; double maxVal; Point minLoc; Point maxLoc;
+    Point matchLoc;
+
+    minMaxLoc(result, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
+
+    /// For SQDIFF and SQDIFF_NORMED, the best matches are lower values. For all the other methods, the higher the better
+
+    matchLoc = maxLoc;
+
+    /// Show me what you got
+    rectangle(image, matchLoc, Point(matchLoc.x + sample.cols, matchLoc.y + sample.rows), Scalar::all(0), 2, 8, 0);
+    rectangle(result, matchLoc, Point(matchLoc.x + sample.cols, matchLoc.y + sample.rows), Scalar::all(0), 2, 8, 0);
+
+}
+
+//sort vector to ascending order(top to bottom or left to right). 1 in y , 0 in x
 void sortVector(vector<vector<Point>> &pp, int xORy)
 {
     for (size_t i = 0; i < pp.size(); i++)
@@ -309,8 +288,8 @@ void sortVector(vector<vector<Point>> &pp, int xORy)
                     if (pp[i][k].y > pp[i][k + 1].y)
                     {
                         Point tmp = pp[i][k + 1];
-                        pp[i][k] = pp[i][k + 1];
-                        pp[i][k + 1] = tmp;
+                        pp[i][k + 1] = pp[i][k];
+                        pp[i][k] = tmp;
                     }
                 }
                 else
@@ -318,17 +297,129 @@ void sortVector(vector<vector<Point>> &pp, int xORy)
                     if (pp[i][k].x > pp[i][k + 1].x)
                     {
                         Point tmp = pp[i][k + 1];
-                        pp[i][k] = pp[i][k + 1];
-                        pp[i][k + 1] = tmp;
+                        pp[i][k + 1] = pp[i][k];
+                        pp[i][k] = tmp;
                     }
                 }
             }
         }
     }
 }
+//unfinished
+void quadraticFit(vector<Point> &p)
+{
+    const size_t N = p.size();
+    const int n = 2;
 
+    double X[2 * n + 1];
+    size_t i, j, k;
+    for (i = 0; i < 2 * n + 1; i++)
+    {
+        X[i] = 0;
+        for (j = 0; j < N; j++)
+        {
+            X[i] = X[i] + pow(p[j].x, i);
+        }
+    }
+    double B[n + 1][n + 2], a[n + 1];
+
+    for (i = 0; i <= n; i++)
+        for (j = 0; j <= n; j++)
+            B[i][j] = X[i + j];            //Build the Normal matrix by storing the corresponding coefficients at the right positions except the last column of the matrix
+    double Y[n + 1];                    //Array to store the values of sigma(yi),sigma(xi*yi),sigma(xi^2*yi)...sigma(xi^n*yi)
+    for (i = 0; i < n + 1; i++)
+    {
+        Y[i] = 0;
+        for (j = 0; j < N; j++)
+            Y[i] = Y[i] + pow(p[j].x, i)*p[j].y;        //consecutive positions will store sigma(yi),sigma(xi*yi),sigma(xi^2*yi)...sigma(xi^n*yi)
+    }
+    for (i = 0; i <= n; i++)
+    {
+        B[i][n + 1] = Y[i];
+    }//load the values of Y as the last column of B(Normal Matrix but augmented)
+    int n1 = 3;             //n is made n+1 because the Gaussian Elimination part below was for n equations, but here n is the degree of polynomial and for n degree we get n+1 equations
+    cout << "\nThe Normal(Augmented Matrix) is as follows:\n";
+    for (i = 0; i < n1; i++)            //print the Normal-augmented matrix
+    {
+        for (j = 0; j <= n1; j++)
+            cout << B[i][j] << setw(16);
+        cout << "\n";
+    }
+    for (i = 0; i < n1; i++)                    //From now Gaussian Elimination starts(can be ignored) to solve the set of linear equations (Pivotisation)
+        for (k = i + 1; k < n1; k++)
+            if (B[i][i] < B[k][i])
+                for (j = 0; j <= n1; j++)
+                {
+                    double temp = B[i][j];
+                    B[i][j] = B[k][j];
+                    B[k][j] = temp;
+                }
+
+    for (i = 0; i < n1 - 1; i++)            //loop to perform the gauss elimination
+        for (k = i + 1; k < n1; k++)
+        {
+            double t = B[k][i] / B[i][i];
+            for (j = 0; j <= n1; j++)
+                B[k][j] = B[k][j] - t*B[i][j];    //make the elements below the pivot elements equal to zero or elimnate the variables
+        }
+    for (i = n1 - 1; i >= 0; i--)                //back-substitution
+    {                        //x is an array whose values correspond to the values of x,y,z..
+        a[i] = B[i][n1];                //make the variable to be calculated equal to the rhs of the last equation
+        for (j = 0; j < n1; j++)
+            if (j != i)            //then subtract all the lhs values except the coefficient of the variable whose value                                   is being calculated
+                a[i] = a[i] - B[i][j] * a[j];
+        a[i] = a[i] / B[i][i];            //now finally divide the rhs by the coefficient of the variable to be calculated
+    }
+    cout << "\nThe values of the coefficients are as follows:\n";
+    for (i = 0; i < n1; i++)
+        cout << "x^" << i << "=" << a[i] << endl;            // Print the values of x^0,x^1,x^2,x^3,....    
+    cout << "\nHence the fitted Polynomial is given by:\ny=";
+    for (i = 0; i < n1; i++)
+        cout << " + (" << a[i] << ")" << "x^" << i;
+    cout << "\n";
+
+}
+void linearFit(const vector<Point>& p, double & a, double & b)
+{
+    int i, j, k, n;
+    cout << "\nEnter the no. of data pairs to be entered:\n";        //To find the size of arrays
+    n = p.size();
+    vector<double> x(n);
+    vector<double> y(n);
+    //Input x-values
+    for (i = 0; i < n; i++)
+        x[i] = p[i].x;
+    //Input y-values
+    for (i = 0; i < n; i++)
+        y[i] = p[i].y;
+
+    double xsum = 0, x2sum = 0, ysum = 0, xysum = 0;                //variables for sums/sigma of xi,yi,xi^2,xiyi etc
+    for (i = 0; i < n; i++)
+    {
+        xsum = xsum + x[i];                        //calculate sigma(xi)
+        ysum = ysum + y[i];                        //calculate sigma(yi)
+        x2sum = x2sum + pow(x[i], 2);                //calculate sigma(x^2i)
+        xysum = xysum + x[i] * y[i];                    //calculate sigma(xi*yi)
+    }
+    a = (n*xysum - xsum*ysum) / (n*x2sum - xsum*xsum);            //calculate slope
+    b = (x2sum*ysum - xsum*xysum) / (x2sum*n - xsum*xsum);            //calculate intercept
+
+                                                                      //double y_fit[n];                        //an array to store the new fitted values of y    
+    vector<double> y_fit(n);
+    for (i = 0; i < n; i++)
+        y_fit[i] = a*x[i] + b;                    //to calculate y(fitted) at given x points
+    cout << "S.no" << setw(5) << "x" << setw(19) << "y(observed)" << setw(19) << "y(fitted)" << endl;
+    cout << "-----------------------------------------------------------------\n";
+    for (i = 0; i < n; i++)
+        cout << i + 1 << "." << setw(8) << x[i] << setw(15) << y[i] << setw(18) << y_fit[i] << endl;//print a table of x,y(obs.) and y(fit.)    
+    cout << "\nThe linear fit line is of the form:\n\n" << a << "x + " << b << endl;        //print the best fit line
+}
 /*@brief Top level fucntion when using user-define points technique.
 Based on priorPoints[][]
+horJtss's order is weird. Top part(from up to bottom), 18 17 16... 12; mid part, 0....11; bottom part 19 .. 24.
+which will project to the structure of verJtss. Making verJtss start at the mid up to mid bottom then to mid top to top top ,
+then from bottom top to bottom bottom.
+BUT horJtss's each row are alright, all start from left to right ()
 */
 void generateTheNet()
 {
@@ -349,29 +440,81 @@ void generateTheNet()
         }
         verticalPtss.push_back(verticalPts);
     }
+    //quadraticFit(verticalPtss[0]);
+    //linearFit(verticalPtss[0]);
 
     predictGapJoints(verticalPtss);
     expandJointsToWholeNet(verticalPtss, horJtss);
 
     predictGapJoints(horJtss);
+
+    //initJtss(horJtss, verJtss);
     expandJointsToWholeNet(horJtss, verJtss);
     sortVector(verJtss, 1);
+    tideUpJtss(verJtss);
+    return;
+}
+
+void tideUpJtss(vector<vector<Point>> &pp)
+{
+    for (size_t i = 0; i < pp.size(); i++)
+    {
+        if (length(pp[i].back(), (*(pp[i].end() - 2))) >
+            1.3 * length((*(pp[i].end() - 2)), (*(pp[i].end() - 3)))
+            )
+
+        {
+            pp[i].pop_back();
+
+        }
+    }
+
+    //image0.copyTo(image);
+    //mask = Scalar::all(0);
+
+    //for each (auto p in verJtss)
+    //{
+    //    for each (auto var in p)
+    //    {
+    //        circle(image, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+    //        circle(mask, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+    //    }
+    //}
+
+    //for each (auto p in horJtss)
+    //{
+    //    for each (auto var in p)
+    //    {
+    //        circle(image, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+    //        circle(mask, var, 2, Scalar::all(255), CV_FILLED, 8, 0);
+    //    }
+    //}
+
 }
 
 
-//put the square into the Jtss
+//put the square into the Jtss. Order up to down : 0 - n
 void initJtss(const vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)
 {
     //Jtss.size() == pp[0].size();
-    for (size_t i = 0; i < pp[0].size(); i++)
+    for (size_t i = 0; i < pp[pp.size() / 2].size(); i++)
     {
         Jtss.push_back(vector<Point>());
     }
-    for (size_t i = 0; i < pp[0].size(); i++)
+    size_t j = 0;
+    for (size_t i = 0; i < pp[pp.size() / 2].size(); i++)
     {
-        for (size_t j = 0; j < pp.size(); j++)
+        for (j = 0; j < pp.size(); j++)
         {
-            Jtss[i].push_back(pp[j][i]);
+            if (i < pp[j].size())
+            {
+                Jtss[i].push_back(pp[j][i]);
+            }
+            else
+            {
+                cout << "yichu loacation j :" << j << "i" << i << endl;
+            }
+
         }
     }
 }
@@ -379,78 +522,46 @@ void initJtss(const vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)
 void expandJointsToWholeNet(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss)//???
 {
     initJtss(pp, Jtss);
-
     const size_t sz = pp[0].size();
-    vector<double> dx = { 0 };
-    vector<double> dy = { 0 };
-    vector<double> dxs = { 0 };
-    vector<double> dys = { 0 };
-    for (size_t i = 0; i < pp.size(); i++)
-    {
-        getDiff(pp[i].front().x, (*(&(pp[i].front()) + 1)).x, (*(&(pp[i].back()) - 1)).x,
-            pp[i].back().x, int(pp[i].size()) - 3, dx[i], dxs[i]);
-        getDiff(pp[i].front().y, (*(&(pp[i].front()) + 1)).y, (*(&(pp[i].back()) - 1)).y,
-            pp[i].back().y, int(pp[i].size()) - 3, dy[i], dys[i]);
-
-        cout << pp[i].front() << endl;
-        cout << (*(&(pp[i].front()) + 1)) << endl;
-        cout << (*(&(pp[i].back()) - 1)) << endl;
-        cout << pp[i].back() << endl;
-
-
-        cout << "DX : " << dx[i] << " DXS: " << dxs[i] << endl;
-        cout << "DY : " << dy[i] << " DYS: " << dys[i] << endl;
-
-    }
-
     //top or left part
+    double dx[100];
+    double dy[100];
     for (size_t i = 0; i < pp.size(); i++)
     {
-
-        //double dX = getTheD(pp[i], 1);
-        //dx[i] = dX;
-        //double dY = getTheD(pp[i], 0);
-        //dy[i] = dY;
-
-        extendTopOrLeft(pp, Jtss, dx[i], dy[i], i, sz, dxs[i], dys[i]);
+        double dX = getTheD(pp[i], 1);
+        dx[i] = dX;
+        double dY = getTheD(pp[i], 0);
+        dy[i] = dY;
+        extendTopOrLeft(pp, Jtss, dx[i], dy[i], i, sz);
     }
-
     //the bottom or right part
     const size_t sz2 = Jtss.size();
     for (size_t i = 0; i < pp.size(); i++)
     {
-        extendBottomOrRight(pp, Jtss, dx[i], dy[i], i, sz2,dxs[i],dys[i]);
+        extendBottomOrRight(pp, Jtss, dx[i], dy[i], i, sz2);
     }
 }
 
-void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, double dx, double dy,
-    size_t i, size_t sz, double dxs, double dys)
+void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss,
+    double dx, double dy, size_t i, size_t sz)
 {
     vector<Point> vecTmp;
-    cout << "tmp" << endl;
     for (size_t j = 1; ; j++)
     {
-        double pX = round(pp[i].front().x - dx*j - j*(j + 1)*dxs / 2);
-        double pY = round(pp[i].front().y - dy*j - j*(j + 1)*dys / 2);
-        Point tmp = Point(int(pX), int(pY));
-        cout << tmp << endl;
+        //double a,b;
+        //linearFit(pp[i], a, b);
+        //double pX = round(pp[i].front().x + dx*j);
+        //double pY = a*pX + b;
 
+
+
+        double pX = round(pp[i].front().x + dx*j);
+        double pY = round(pp[i].front().y + dy*j);
+        Point tmp = Point(int(round(pX)), int(round(pY)));
         if (!outOfImage(tmp))
             break;
-        if (i >= 1)
-        {
-
-            cout << "1" << endl;
-            cout << "dx" << dx << " dxs" << dxs << endl;
-            cout << "dy" << dy << " dys" << dys << endl;
-
-        }
         vecTmp.push_back(tmp);
-        if (i >= 1)
-        {
 
-            cout << "2" << endl;
-        }
         if (j > Jtss.size() - sz)
         {
             Jtss.push_back(vector<Point>());
@@ -466,24 +577,30 @@ void extendTopOrLeft(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss, dou
 }
 
 void extendBottomOrRight(vector<vector<Point>> &pp, vector<vector<Point>> &Jtss,
-    double dx, double dy, size_t i, size_t sz, double dxs, double dys)
+    double dx, double dy, size_t i, size_t sz)
 {
 
     for (size_t k = 1;; k++)
     {
-        double pX = (*(&(pp[i].back()) - k + 1)).x + dx*k + k*(k + 1)*dxs / 2;
-        double pY = (*(&(pp[i].back()) - k + 1)).y + dy*k + k*(k + 1)*dys / 2;
+        double pX = (*(&(pp[i].back()) - k + 1)).x - dx*k;
+        double pY = (*(&(pp[i].back()) - k + 1)).y - dy*k;
 
         Point tmp = Point(int(round(pX)), int(round(pY)));
         if (!outOfImage(tmp))
             break;
-        cout << "\ntmp in bottom gene : " << tmp << endl;
         pp[i].push_back(tmp);
         if (k > Jtss.size() - sz)
         {
             Jtss.push_back(vector<Point>());
         }
-
+        //if ((verJtss.size() >= 17) &&(verJtss[17].size() >= 22))
+        //{
+        //    cout << "mingzhong" << endl;
+        //    cout << "pX = " << pX << "py = " << 
+        //        pY <<"dx " <<dx << "dy " <<dy  
+        //        << "last point "<<pp[i].back() 
+        //        << endl;
+        //}
         Jtss[k + sz - 1].push_back(tmp);
 
         circle(image, tmp, 3, Scalar(0, 0, 255), -1);
@@ -616,16 +733,17 @@ void generateGapJoints(double fGJ[], vector<Point> &pts)
             if (l2 > 1.5 * l1)
             {
                 l2 = length(pts[i + 2], pts[i + 3]);
-                double dX, dXS, dY, dYS;
-                getDiff(pts[i].x, pts[i + 1].x, pts[i + 2].x, pts[i + 3].x, n, dX, dXS);
-                getDiff(pts[i].y, pts[i + 1].y, pts[i + 2].y, pts[i + 3].y, n, dY, dYS);
+                double dX = ((pts[i].x - pts[i + 2].x) +
+                    (pts[i + 1].x - pts[i + 3].x)) / (2.0 * (n + 1));
+                double dY = ((pts[i].y - pts[i + 2].y) +
+                    (pts[i + 1].y - pts[i + 3].y)) / (2.0 * (n + 1));
 
                 vector<Point> vecTmp;
                 //cout << "tmp in Generate Gap Points" << endl;
                 for (size_t j = 1; j < n; j++)
                 {
-                    Point tmp = Point(int(round(pts[i + 1].x + j*dX + ((j*(j + 1)) / 2)*dXS)),
-                        int(round(pts[i + 1].y + j*dY + ((j*(j + 1)) / 2)*dYS)));
+                    Point tmp = Point(int(round(pts[i + 1].x - j*dX)),
+                        int(round(pts[i + 1].y - j*dY)));
                     //cout << tmp << endl;
                     vecTmp.push_back(tmp);
                     circle(image, tmp, 2, Scalar(0, 255, 0), FILLED);
@@ -697,21 +815,19 @@ void defineFourEdges(vector<double> angles, double lineLength)
 void findNet(const Mat& image, vector<double> angles, double lineLength)
 {
     // down-scale and upscale the image to filter out the noise
-    //pyrDown(image, pyr, Size(image.cols / 2, image.rows / 2));
-    //pyrUp(pyr, timg, image.size());
-    //imshow("pyrDown", pyr);
+    Mat tmp;
+    //pyrDownOrUp ? pyrDown(image, pyr, Size(image.cols / 2, image.rows / 2)) : pyrUp(pyr, tmg, image.size());
     cvtColor(image, gray, CV_BGR2GRAY);
-    //Dilation(gray, gray);
-    Erosion(gray, gray);
-    Canny(gray, edges, 20, 80);
+    // dilate or erode to reduce noise
+    DilateOrErode ? Dilation(gray, gray) : Erosion(gray, gray);
+    Canny(gray, edges, 50, 100);
     imshow("Edges", edges);
 
-    /// Create Trackbars for Thresholds
+    // Make findLines() real-time adjustbale
     char thresh_label[50];
     sprintf(thresh_label, "Thres: %d + input", min_threshold);
     createTrackbar(thresh_label, wndName, &trackbar, max_trackbar, findLines);
     findLines(0, 0);
-
 }
 
 void findLines(int, void*)
@@ -731,7 +847,7 @@ void Erosion(Mat& src, Mat& erosion_dst)
 {
     int erosion_type;
     int erosion_elem = 0;
-    int erosion_size = 0;
+    int erosion_size = 3;
     int const max_elem = 2;
     int const max_kernel_size = 21;
     if (erosion_elem == 0) { erosion_type = MORPH_RECT; }
@@ -749,11 +865,12 @@ void Erosion(Mat& src, Mat& erosion_dst)
 //Dilate the image
 void Dilation(Mat& src, Mat& dilation_dst)
 {
-    int dilation_type;
+    int dilation_type = 0;
     int dilation_elem = 0;
     int dilation_size = 1;
-    int const max_elem = 2;
-    int const max_kernel_size = 21;
+    //for track bars in future
+    /*int const max_elem = 2;
+    int const max_kernel_size = 21;*/
 
     if (dilation_elem == 0) { dilation_type = MORPH_RECT; }
     else if (dilation_elem == 1) { dilation_type = MORPH_CROSS; }
@@ -762,9 +879,8 @@ void Dilation(Mat& src, Mat& dilation_dst)
     Mat element = getStructuringElement(dilation_type,
         Size(2 * dilation_size + 1, 2 * dilation_size + 1),
         Point(dilation_size, dilation_size));
-    /// Apply the dilation operation
     dilate(src, dilation_dst, element);
-    imshow("Dilation Demo", dilation_dst);
+    imshow("Dilation", dilation_dst);
 }
 
 //Inpaint with Mask
@@ -786,7 +902,7 @@ void makeMask(const vector<Vec4i> lines,
     const vector<double> angles, const double lineLength)
 {
     int count = 0;
-    const int lineThickness = 3;
+    const int lineThickness = 5;
     for (size_t i = 0; i < lines.size(); i++)
     {
         Vec4i l = lines[i];
@@ -796,7 +912,7 @@ void makeMask(const vector<Vec4i> lines,
         if (((theta >= angles[0] - 2) && (theta <= 90)) || ((theta <= angles[1] + 2) && (theta >= -90)) ||
             (theta >= angles[2] - 1) && (theta <= angles[3] + 1))
         {
-            if ((length(p1, p2) < lineLength) /*&& (ifAtCenter(p1, p2, image))*/)
+            if ((length(p1, p2) > lineLength) & (ifAtCenter(p1, p2, image)))
             {
                 continue;
             }
@@ -899,6 +1015,17 @@ static void onMouse(int event, int x, int y, int, void*)
             imshow(wndName2, mask);
         }
         break;
+    case 'u':
+        if (event == EVENT_LBUTTONDOWN)
+        {
+            Rect roi = Rect(seed.x, seed.y, 15, 15);
+            cout << roi << endl;
+            rectangle(image, roi, Scalar(0, 0, 0), 1);
+            sample = image(roi);
+            imshow(wndName, image);
+            imshow(wndName2, mask);
+        }
+        break;
     default:
         break;
     }
@@ -948,10 +1075,10 @@ void hardPriorPts()
 
 void drawTheNet()
 {
-    polylines(image, horJtss, false, Scalar(0, 255, 0), 1);
-    polylines(mask, horJtss, false, Scalar::all(255), 1);
-    polylines(image, verJtss, false, Scalar(255, 0, 0), 1);
-    polylines(mask, verJtss, false, Scalar::all(255), 1);
+    polylines(image, horJtss, false, Scalar(0, 255, 0), 3);
+    polylines(mask, horJtss, false, Scalar::all(255), 3);
+    polylines(image, verJtss, false, Scalar(255, 0, 0), 3);
+    polylines(mask, verJtss, false, Scalar::all(255), 3);
 }
 
 
@@ -963,7 +1090,7 @@ void help()
         "2. 'f' to define the four edges \n"
         "3. 'c' to autogenerate mask and inpaint"
         "4a. '0' to manually draw mask on the first result\n"
-        "4b. Right button down and drag on the mask to erase wrongly generated part\n"
+        "4b. '0' again to switch to erase mode; Left button down and drag on the mask to erase wrongly generated part\n"
         "5. 'i' to inpaint with the mask\n"
         "6. repeat 4 and 5 until satisfying mask is obtained\n"
         "7. 'v' to inpaint the video and output result video\n\n"
