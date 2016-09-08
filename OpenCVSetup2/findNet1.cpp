@@ -9,8 +9,8 @@
 #include "Header.h"
 
 vector<Point> points;
-vector<vector<Point>> priorPoints;
 vector<Point> priorRow;
+vector<vector<Point>> priorPoints;
 vector<vector<Point>> horJtss;
 vector<vector<Point>> verJtss;
 
@@ -189,7 +189,7 @@ void eventLoop()
         case 'v':
             flag = 'v'; cout << char(flag) << endl;
             cout << "video Mode" << endl;
-            processVideo(0);
+            processVideo(51);
             break;
         case 'd':
             pressDraw = pressDraw ? false : true;
@@ -199,7 +199,7 @@ void eventLoop()
         case 'l':
             flag = 'l'; cout << char(flag) << endl;
 
-            hardPriorPts();
+            //hardPriorPts();
             verJtss.clear();
             horJtss.clear();
             image0.copyTo(image);
@@ -251,7 +251,7 @@ void eventLoop()
 }
 
 
-
+//templateMatching
 void templateMatching()
 {
     int result_cols = image.cols - sample.cols + 1;
@@ -820,7 +820,7 @@ void findNet(const Mat& image, vector<double> angles, double lineLength)
     cvtColor(image, gray, CV_BGR2GRAY);
     // dilate or erode to reduce noise
     DilateOrErode ? Dilation(gray, gray) : Erosion(gray, gray);
-    Canny(gray, edges, 50, 100);
+    Canny(gray, edges, 25, 50);
     imshow("Edges", edges);
 
     // Make findLines() real-time adjustbale
@@ -1075,10 +1075,10 @@ void hardPriorPts()
 
 void drawTheNet()
 {
-    polylines(image, horJtss, false, Scalar(0, 255, 0), 3);
-    polylines(mask, horJtss, false, Scalar::all(255), 3);
-    polylines(image, verJtss, false, Scalar(255, 0, 0), 3);
-    polylines(mask, verJtss, false, Scalar::all(255), 3);
+    polylines(image, horJtss, false, Scalar(0, 255, 0), 5);
+    polylines(mask, horJtss, false, Scalar::all(255), 5);
+    polylines(image, verJtss, false, Scalar(255, 0, 0), 5);
+    polylines(mask, verJtss, false, Scalar::all(255), 5);
 }
 
 
